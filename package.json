@@ -1,0 +1,55 @@
+{
+  "name": "mcp-server",
+  "version": "1.0.0",
+  "description": "Minimal, general-purpose MCP (Model Context Protocol) server library",
+  "type": "module",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "test": "brittle test/*.test.js",
+    "test:coverage": "c8 --include index.js brittle test/*.test.js",
+    "test:coverage:all": "c8 brittle test/*.test.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./http": "./http.js",
+    "./http-bare": "./http-bare.js",
+    "./stdio": "./stdio.js",
+    "./stdio-bare": "./stdio-bare.js"
+  },
+  "files": [
+    "index.js",
+    "http.js",
+    "http-bare.js",
+    "stdio.js",
+    "stdio-bare.js",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "tools",
+    "resources",
+    "bare",
+    "pear",
+    "holepunch"
+  ],
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.0.0",
+    "bare-http1": "^4.0.0",
+    "bare-readline": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": { "optional": true },
+    "bare-http1": { "optional": true },
+    "bare-readline": { "optional": true }
+  },
+  "devDependencies": {
+    "brittle": "^3.0.0",
+    "c8": "^10.0.0"
+  }
+}
