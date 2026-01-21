@@ -1,5 +1,5 @@
 /**
- * MCP stdio Transport
+ * MCP stdio Transport (Node.js)
  *
  * Runs an MCP server over stdin/stdout for Claude Desktop and similar clients.
  * JSON-RPC messages are sent one per line.
@@ -7,8 +7,8 @@
  * Notifications are sent as JSON-RPC messages without an `id` field.
  *
  * Usage:
- *   import { createMCPServer } from './mcp/index.js'
- *   import { createStdioTransport } from './mcp/stdio.js'
+ *   import { createMCPServer } from 'bare-mcp'
+ *   import { createStdioTransport } from 'bare-mcp/stdio'
  *
  *   const mcp = createMCPServer({ name: 'my-server' })
  *   mcp.addTool({ ... })

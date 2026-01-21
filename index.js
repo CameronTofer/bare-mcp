@@ -2,10 +2,10 @@
  * General-Purpose MCP Server Library
  *
  * A minimal, reusable implementation of the Model Context Protocol (MCP).
- * Works with any project — just register your tools/resources and pick a transport.
+ * Works on both Node.js and Bare runtime (Pear/Holepunch).
  *
  * Usage:
- *   import { createMCPServer } from './mcp/index.js'
+ *   import { createMCPServer } from 'bare-mcp'
  *
  *   const mcp = createMCPServer({ name: 'my-server', version: '1.0.0' })
  *
@@ -41,8 +41,8 @@
  *     read: async (params) => JSON.stringify(await getUser(params.id))
  *   })
  *
- *   // Then use with a transport:
- *   import { createHttpTransport } from './mcp/http.js'
+ *   // Then use with a transport (auto-selects correct implementation):
+ *   import { createHttpTransport } from 'bare-mcp/http'
  *   await createHttpTransport(mcp, { port: 3000 })
  */
 
@@ -134,7 +134,7 @@ export function createMCPServer(options = {}) {
   const {
     name = 'mcp-server',
     version = '1.0.0',
-    protocolVersion = '2024-11-05'
+    protocolVersion = '2025-11-25'
   } = options
 
   const tools = new Map()
@@ -153,7 +153,13 @@ export function createMCPServer(options = {}) {
    * @param {string} tool.name - Tool name (unique identifier)
    * @param {string} tool.description - Human-readable description
    * @param {z.ZodSchema} tool.parameters - Zod schema for parameters
-   * @param {function} tool.execute - Async function (params) => string result
+   * @param {function} tool.execute - Async function (params) => result (string or content array)
+   * @param {object} [tool.annotations] - Optional tool annotations (ToolAnnotations)
+   * @param {string} [tool.annotations.title] - Human-readable title
+   * @param {boolean} [tool.annotations.readOnlyHint] - If true, tool doesn't modify environment (default: false)
+   * @param {boolean} [tool.annotations.destructiveHint] - If true, tool may destroy data (default: true)
+   * @param {boolean} [tool.annotations.idempotentHint] - If true, repeated calls have no extra effect (default: false)
+   * @param {boolean} [tool.annotations.openWorldHint] - If true, interacts with external systems (default: true)
    */
   function addTool(tool) {
     if (!tool.name || !tool.execute) {
@@ -163,7 +169,8 @@ export function createMCPServer(options = {}) {
       name: tool.name,
       description: tool.description || '',
       parameters: tool.parameters || z.object({}),
-      execute: tool.execute
+      execute: tool.execute,
+      annotations: tool.annotations || null
     })
   }
 
@@ -184,10 +191,15 @@ export function createMCPServer(options = {}) {
    * @param {object} resource
    * @param {string} resource.uri - Unique resource URI (e.g., 'file:///path', 'myapp://data')
    * @param {string} resource.name - Human-readable name
+   * @param {string} [resource.title] - Optional human-readable title for display
    * @param {string} [resource.description] - Optional description
    * @param {string} [resource.mimeType] - Content type (default: text/plain)
    * @param {string} [resource.text] - Static text content
-   * @param {function} [resource.read] - Dynamic content: async () => string
+   * @param {function} [resource.read] - Dynamic content: async () => string or { text, annotations }
+   * @param {object} [resource.annotations] - Optional resource annotations (Annotations)
+   * @param {string[]} [resource.annotations.audience] - Who content is for: ["user"], ["assistant"], or both
+   * @param {number} [resource.annotations.priority] - Importance: 0.0 (optional) to 1.0 (required)
+   * @param {string} [resource.annotations.lastModified] - ISO 8601 timestamp
    */
   function addResource(resource) {
     if (!resource.uri || !resource.name) {
@@ -199,10 +211,12 @@ export function createMCPServer(options = {}) {
     resources.set(resource.uri, {
       uri: resource.uri,
       name: resource.name,
+      title: resource.title,
       description: resource.description,
       mimeType: resource.mimeType || 'text/plain',
       text: resource.text,
-      read: resource.read
+      read: resource.read,
+      annotations: resource.annotations || null
     })
   }
 
@@ -221,9 +235,11 @@ export function createMCPServer(options = {}) {
    * @param {object} template
    * @param {string} template.uriTemplate - URI pattern (e.g., 'user://{id}', 'file://{path}')
    * @param {string} template.name - Human-readable name
+   * @param {string} [template.title] - Optional human-readable title for display
    * @param {string} [template.description] - Optional description
    * @param {string} [template.mimeType] - Content type
-   * @param {function} template.read - async (params) => string, params extracted from URI
+   * @param {function} template.read - async (params) => string or { text, annotations }
+   * @param {object} [template.annotations] - Optional annotations for the template itself
    */
   function addResourceTemplate(template) {
     if (!template.uriTemplate || !template.name || !template.read) {
@@ -232,9 +248,11 @@ export function createMCPServer(options = {}) {
     resourceTemplates.set(template.uriTemplate, {
       uriTemplate: template.uriTemplate,
       name: template.name,
+      title: template.title,
       description: template.description,
       mimeType: template.mimeType || 'text/plain',
-      read: template.read
+      read: template.read,
+      annotations: template.annotations || null
     })
   }
 
@@ -431,29 +449,58 @@ export function createMCPServer(options = {}) {
 
   /**
    * Read a resource by URI.
+   * Returns { uri, mimeType, text, annotations? }
    */
   async function readResource(uri) {
     // Check static/dynamic resources first
     const resource = resources.get(uri)
     if (resource) {
-      const content = resource.read
+      const rawContent = resource.read
         ? await resource.read()
         : resource.text
+
+      // Handle different return formats from read():
+      // 1. String - plain text content
+      // 2. Object with text and optional annotations
+      let text, contentAnnotations
+      if (rawContent && typeof rawContent === 'object' && 'text' in rawContent) {
+        text = rawContent.text
+        contentAnnotations = rawContent.annotations
+      } else {
+        text = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent)
+      }
+
+      // Merge annotations: content-level annotations override resource-level
+      const annotations = contentAnnotations || resource.annotations || null
+
       return {
         uri,
         mimeType: resource.mimeType,
-        text: typeof content === 'string' ? content : JSON.stringify(content)
+        text,
+        ...(annotations && { annotations })
       }
     }
 
     // Try template matching
     const match = matchTemplate(uri)
     if (match) {
-      const content = await match.template.read(match.params)
+      const rawContent = await match.template.read(match.params)
+
+      let text, contentAnnotations
+      if (rawContent && typeof rawContent === 'object' && 'text' in rawContent) {
+        text = rawContent.text
+        contentAnnotations = rawContent.annotations
+      } else {
+        text = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent)
+      }
+
+      const annotations = contentAnnotations || match.template.annotations || null
+
       return {
         uri,
         mimeType: match.template.mimeType,
-        text: typeof content === 'string' ? content : JSON.stringify(content)
+        text,
+        ...(annotations && { annotations })
       }
     }
 
@@ -619,7 +666,8 @@ export function createMCPServer(options = {}) {
           tools: Array.from(tools.values()).map(t => ({
             name: t.name,
             description: t.description,
-            inputSchema: zodToJsonSchema(t.parameters)
+            inputSchema: zodToJsonSchema(t.parameters),
+            ...(t.annotations && { annotations: t.annotations })
           }))
         }
 
@@ -639,9 +687,20 @@ export function createMCPServer(options = {}) {
 
           recordActivity(toolName, true)
 
-          // Ensure result is a string
-          const text = typeof result === 'string' ? result : JSON.stringify(result)
-          return { content: [{ type: 'text', text }] }
+          // Handle different result formats:
+          // 1. Array of content items (with optional annotations)
+          // 2. Object with content array and optional isError
+          // 3. Plain string or other value (wrap in text content)
+          if (Array.isArray(result)) {
+            return { content: result }
+          } else if (result && typeof result === 'object' && result.content) {
+            // Result object with content array (and possibly isError, structuredContent)
+            return result
+          } else {
+            // Simple result - wrap in text content
+            const text = typeof result === 'string' ? result : JSON.stringify(result)
+            return { content: [{ type: 'text', text }] }
+          }
         } catch (err) {
           recordActivity(toolName, false, err.message)
           throw err
@@ -655,8 +714,10 @@ export function createMCPServer(options = {}) {
           resources: Array.from(resources.values()).map(r => ({
             uri: r.uri,
             name: r.name,
-            description: r.description,
-            mimeType: r.mimeType
+            ...(r.title && { title: r.title }),
+            ...(r.description && { description: r.description }),
+            mimeType: r.mimeType,
+            ...(r.annotations && { annotations: r.annotations })
           }))
         }
 
@@ -665,8 +726,10 @@ export function createMCPServer(options = {}) {
           resourceTemplates: Array.from(resourceTemplates.values()).map(t => ({
             uriTemplate: t.uriTemplate,
             name: t.name,
-            description: t.description,
-            mimeType: t.mimeType
+            ...(t.title && { title: t.title }),
+            ...(t.description && { description: t.description }),
+            mimeType: t.mimeType,
+            ...(t.annotations && { annotations: t.annotations })
           }))
         }
 

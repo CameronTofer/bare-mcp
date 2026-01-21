@@ -9,6 +9,7 @@ Works on **Node.js** and **Bare runtime** (Pear/Holepunch).
 - **Tools** — Register functions that AI clients can call
 - **Resources** — Expose data that clients can read (static or dynamic)
 - **Resource Templates** — URI patterns with parameters (`user://{id}`)
+- **Annotations** — Metadata hints for tools and content (MCP 2025-11-25)
 - **Notifications** — Push updates to connected clients
 - **Subscriptions** — Clients can subscribe to resource changes
 - **Multiple Transports** — HTTP, WebSocket, SSE, stdio
@@ -16,8 +17,8 @@ Works on **Node.js** and **Bare runtime** (Pear/Holepunch).
 ## Quick Start
 
 ```javascript
-import { createMCPServer, z } from './mcp/index.js'
-import { createHttpTransport } from './mcp/http.js'
+import { createMCPServer, z } from 'bare-mcp'
+import { createHttpTransport } from 'bare-mcp/http'
 
 // Create server
 const mcp = createMCPServer({
@@ -35,7 +36,7 @@ mcp.addTool({
   execute: async ({ name }) => `Hello, ${name}!`
 })
 
-// Start HTTP server
+// Start HTTP server (works on both Node.js and Bare)
 await createHttpTransport(mcp, { port: 3000 })
 ```
 
@@ -60,6 +61,74 @@ mcp.addTool({
 
 // Register multiple tools
 mcp.addTools([tool1, tool2, tool3])
+```
+
+### Tool Annotations
+
+Tools can include annotations that describe their behavior:
+
+```javascript
+mcp.addTool({
+  name: 'search',
+  description: 'Search the web',
+  parameters: z.object({ query: z.string() }),
+  execute: async ({ query }) => `Results for: ${query}`,
+  annotations: {
+    title: 'Web Search',        // Human-readable title
+    readOnlyHint: true,         // Doesn't modify environment (default: false)
+    openWorldHint: true         // Interacts with external systems (default: true)
+  }
+})
+
+// Destructive tool example
+mcp.addTool({
+  name: 'delete_file',
+  description: 'Delete a file',
+  parameters: z.object({ path: z.string() }),
+  execute: async ({ path }) => { /* ... */ },
+  annotations: {
+    title: 'Delete File',
+    readOnlyHint: false,        // Modifies environment
+    destructiveHint: true,      // May destroy data (default: true)
+    idempotentHint: true,       // Repeated calls have same effect (default: false)
+    openWorldHint: false        // Only affects local system
+  }
+})
+```
+
+| Annotation | Default | Description |
+|------------|---------|-------------|
+| `title` | — | Human-readable display name |
+| `readOnlyHint` | `false` | If true, tool doesn't modify its environment |
+| `destructiveHint` | `true` | If true, tool may destroy data (only when readOnlyHint=false) |
+| `idempotentHint` | `false` | If true, repeated calls have no extra effect (only when readOnlyHint=false) |
+| `openWorldHint` | `true` | If true, interacts with external systems |
+
+### Tool Results with Annotations
+
+Tools can return rich content with annotations:
+
+```javascript
+mcp.addTool({
+  name: 'analyze',
+  execute: async () => [{
+    type: 'text',
+    text: 'Analysis results...',
+    annotations: {
+      audience: ['user'],           // Who content is for: 'user', 'assistant', or both
+      priority: 0.9                  // Importance: 0.0 (optional) to 1.0 (required)
+    }
+  }]
+})
+
+// Return error with content
+mcp.addTool({
+  name: 'fetch',
+  execute: async () => ({
+    content: [{ type: 'text', text: 'Connection timeout' }],
+    isError: true
+  })
+})
 ```
 
 ## Resources
@@ -91,6 +160,47 @@ mcp.addResource({
   })
 })
 ```
+
+### Resource Annotations
+
+Resources support annotations for display hints and content metadata:
+
+```javascript
+mcp.addResource({
+  uri: 'doc://readme',
+  name: 'README',
+  title: 'Project Documentation',     // Human-readable title
+  mimeType: 'text/markdown',
+  text: '# My Project',
+  annotations: {
+    audience: ['user'],               // Who content is for
+    priority: 0.9,                    // Importance (0.0 to 1.0)
+    lastModified: '2025-01-15T10:00:00Z'
+  }
+})
+```
+
+Dynamic resources can return annotations per-read:
+
+```javascript
+mcp.addResource({
+  uri: 'cache://data',
+  name: 'Cached Data',
+  read: async () => ({
+    text: JSON.stringify(getCachedData()),
+    annotations: {
+      lastModified: new Date().toISOString(),
+      audience: ['assistant']
+    }
+  })
+})
+```
+
+| Annotation | Type | Description |
+|------------|------|-------------|
+| `audience` | `string[]` | Who content is for: `["user"]`, `["assistant"]`, or `["user", "assistant"]` |
+| `priority` | `number` | Importance: 0.0 (optional) to 1.0 (required) |
+| `lastModified` | `string` | ISO 8601 timestamp of last modification |
 
 ### Resource Templates
 
@@ -137,12 +247,12 @@ mcp.notify('notifications/custom', { data: 'anything' })
 ### HTTP Transport
 
 ```javascript
-import { createHttpTransport } from './mcp/http.js'
+import { createHttpTransport } from 'bare-mcp/http'
 
 const transport = await createHttpTransport(mcp, {
   port: 3000,
   host: '0.0.0.0',
-  websocket: true,  // Enable WebSocket (default: true)
+  websocket: true,  // Enable WebSocket (default: true, Node.js only)
   onActivity: (entry) => console.log('Tool called:', entry.tool)
 })
 
@@ -160,7 +270,7 @@ const transport = await createHttpTransport(mcp, {
 For Claude Desktop and similar clients:
 
 ```javascript
-import { createStdioTransport } from './mcp/stdio.js'
+import { createStdioTransport } from 'bare-mcp/stdio'
 
 await createStdioTransport(mcp, {
   onActivity: (entry) => console.error('Tool:', entry.tool),
@@ -279,7 +389,7 @@ Create an MCP server instance.
 const mcp = createMCPServer({
   name: 'my-server',           // Server name
   version: '1.0.0',            // Server version
-  protocolVersion: '2024-11-05' // MCP protocol version
+  protocolVersion: '2025-11-25' // MCP protocol version
 })
 ```
 
@@ -330,40 +440,47 @@ const transport = await createStdioTransport(mcp, {
 
 ## Bare Runtime (Pear)
 
-For Pear apps running on Bare runtime, use the Bare-specific transports:
+This library uses **conditional exports** to support both Node.js and Bare runtime. The correct implementation is selected automatically based on your runtime:
 
 ```javascript
-import { createMCPServer } from 'mcp-server'
-import { createHttpTransport } from 'mcp-server/http-bare'
+import { createMCPServer } from 'bare-mcp'
+import { createHttpTransport } from 'bare-mcp/http'  // Auto-selects correct impl
+import { createStdioTransport } from 'bare-mcp/stdio'  // Auto-selects correct impl
 
-const mcp = createMCPServer({ name: 'my-pear-app' })
+const mcp = createMCPServer({ name: 'my-app' })
 mcp.addTool({ ... })
 
 await createHttpTransport(mcp, { port: 3000 })
 ```
 
-### Transports by Runtime
+The `"bare"` export condition (recognized by Bare's module system) selects the Bare implementation; otherwise the Node.js implementation is used.
 
-| Runtime | HTTP | stdio |
-|---------|------|-------|
-| Node.js | `mcp-server/http` | `mcp-server/stdio` |
-| Bare | `mcp-server/http-bare` | `mcp-server/stdio-bare` |
+### Explicit Imports
 
-### Bare Transport Differences
+If you need to explicitly select a runtime implementation:
 
-- **http-bare**: Uses `bare-http1`, SSE only (no WebSocket)
-- **stdio-bare**: Uses raw `process.stdin`/`stdout` (no readline)
+| Transport | Node.js | Bare |
+|-----------|---------|------|
+| HTTP | `bare-mcp/http-node` | `bare-mcp/http-bare` |
+| stdio | `bare-mcp/stdio-node` | `bare-mcp/stdio-bare` |
+
+### Transport Differences
+
+- **http (Node.js)**: Uses `node:http` + `ws`, supports WebSocket and SSE
+- **http (Bare)**: Uses `bare-http1`, SSE only (no WebSocket)
+- **stdio (Node.js)**: Uses `node:readline`
+- **stdio (Bare)**: Uses raw `process.stdin`/`stdout`
 
 ### Dependencies
 
 For Node.js:
 ```bash
-npm install mcp-server ws
+npm install bare-mcp ws
 ```
 
 For Bare/Pear:
 ```bash
-npm install mcp-server bare-http1
+npm install bare-mcp bare-http1
 ```
 
 ## License

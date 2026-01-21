@@ -6,7 +6,7 @@ test('createMCPServer - creates server with defaults', async (t) => {
 
   t.is(mcp.name, 'mcp-server')
   t.is(mcp.version, '1.0.0')
-  t.is(mcp.protocolVersion, '2024-11-05')
+  t.is(mcp.protocolVersion, '2025-11-25')
   t.is(mcp.tools.size, 0)
   t.is(mcp.resources.size, 0)
 })

@@ -1,13 +1,13 @@
 /**
- * MCP HTTP Transport
+ * MCP HTTP Transport (Node.js)
  *
  * Exposes an MCP server over HTTP with multiple notification transports:
  * - WebSocket: Bidirectional, used for subscriptions and real-time updates
  * - SSE: Server-Sent Events for simple server→client push
  *
  * Usage:
- *   import { createMCPServer } from './mcp/index.js'
- *   import { createHttpTransport } from './mcp/http.js'
+ *   import { createMCPServer } from 'bare-mcp'
+ *   import { createHttpTransport } from 'bare-mcp/http'
  *
  *   const mcp = createMCPServer({ name: 'my-server' })
  *   mcp.addTool({ ... })

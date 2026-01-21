@@ -1,12 +1,15 @@
 /**
- * MCP stdio Transport for Bare Runtime
+ * MCP stdio Transport (Bare Runtime)
  *
  * Uses raw stdin/stdout for Pear/Bare compatibility.
  * Reads newline-delimited JSON-RPC messages.
  *
+ * This module is auto-selected when importing 'bare-mcp/stdio' under Bare runtime.
+ * For explicit import: 'bare-mcp/stdio-bare'
+ *
  * Usage:
- *   import { createMCPServer } from 'mcp-server'
- *   import { createStdioTransport } from 'mcp-server/stdio-bare'
+ *   import { createMCPServer } from 'bare-mcp'
+ *   import { createStdioTransport } from 'bare-mcp/stdio'
  *
  *   const mcp = createMCPServer({ name: 'my-server' })
  *   mcp.addTool({ ... })

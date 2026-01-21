@@ -1,12 +1,15 @@
 /**
- * MCP HTTP Transport for Bare Runtime
+ * MCP HTTP Transport (Bare Runtime)
  *
  * Uses bare-http1 instead of node:http for Pear/Bare compatibility.
- * WebSocket support requires a Bare-compatible WebSocket server.
+ * SSE only (no WebSocket).
+ *
+ * This module is auto-selected when importing 'bare-mcp/http' under Bare runtime.
+ * For explicit import: 'bare-mcp/http-bare'
  *
  * Usage:
- *   import { createMCPServer } from 'mcp-server'
- *   import { createHttpTransport } from 'mcp-server/http-bare'
+ *   import { createMCPServer } from 'bare-mcp'
+ *   import { createHttpTransport } from 'bare-mcp/http'
  *
  *   const mcp = createMCPServer({ name: 'my-server' })
  *   mcp.addTool({ ... })
