@@ -131,6 +131,63 @@ mcp.addTool({
 })
 ```
 
+### Error Handling
+
+Tools can throw `MCPError` with specific error codes:
+
+```javascript
+import { MCPError, ErrorCode } from 'bare-mcp'
+
+mcp.addTool({
+  name: 'get_user',
+  parameters: z.object({ id: z.string() }),
+  execute: async ({ id }) => {
+    const user = await db.findUser(id)
+    if (!user) {
+      throw new MCPError(
+        ErrorCode.INVALID_PARAMS,
+        `User not found: ${id}`,
+        { userId: id }  // Optional data field
+      )
+    }
+    return JSON.stringify(user)
+  }
+})
+
+// Custom error codes (use values > -32000)
+mcp.addTool({
+  name: 'rate_limited_api',
+  execute: async () => {
+    throw new MCPError(-32001, 'Rate limit exceeded', { retryAfter: 60 })
+  }
+})
+```
+
+**Standard Error Codes:**
+
+| Code | Name | Description |
+|------|------|-------------|
+| -32700 | `PARSE_ERROR` | Invalid JSON |
+| -32600 | `INVALID_REQUEST` | Not a valid JSON-RPC request |
+| -32601 | `METHOD_NOT_FOUND` | Method does not exist |
+| -32602 | `INVALID_PARAMS` | Invalid parameters (validation, missing args) |
+| -32603 | `INTERNAL_ERROR` | Internal server error |
+| -32002 | `RESOURCE_NOT_FOUND` | Resource not found |
+
+Error responses follow the JSON-RPC 2.0 spec:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "User not found: abc123",
+    "data": { "userId": "abc123" }
+  }
+}
+```
+
 ## Resources
 
 Resources expose data that clients can read.

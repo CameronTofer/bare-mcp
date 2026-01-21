@@ -1,5 +1,5 @@
 import test from 'brittle'
-import { createMCPServer, z } from '../index.js'
+import { createMCPServer, z, MCPError, ErrorCode } from '../index.js'
 
 test('handleRequest - initialize returns server info', async (t) => {
   const mcp = createMCPServer({ name: 'test-server', version: '1.2.3' })
@@ -359,4 +359,153 @@ test('resources/templates/list - includes template annotations', async (t) => {
   t.is(result.resourceTemplates.length, 1)
   t.is(result.resourceTemplates[0].title, 'User Profile')
   t.alike(result.resourceTemplates[0].annotations.audience, ['user'])
+})
+
+// ============================================================================
+// Error Handling Tests
+// ============================================================================
+
+test('MCPError - creates error with code and message', async (t) => {
+  const err = new MCPError(ErrorCode.INVALID_PARAMS, 'Missing required field')
+
+  t.is(err.code, -32602)
+  t.is(err.message, 'Missing required field')
+  t.is(err.data, undefined)
+  t.is(err.name, 'MCPError')
+})
+
+test('MCPError - creates error with data', async (t) => {
+  const err = new MCPError(-32001, 'Rate limited', { retryAfter: 60 })
+
+  t.is(err.code, -32001)
+  t.is(err.message, 'Rate limited')
+  t.alike(err.data, { retryAfter: 60 })
+})
+
+test('MCPError - toJSON returns correct format', async (t) => {
+  const err = new MCPError(ErrorCode.INTERNAL_ERROR, 'Something broke', { detail: 'info' })
+  const json = err.toJSON()
+
+  t.is(json.code, -32603)
+  t.is(json.message, 'Something broke')
+  t.alike(json.data, { detail: 'info' })
+})
+
+test('MCPError - toJSON omits data when undefined', async (t) => {
+  const err = new MCPError(ErrorCode.METHOD_NOT_FOUND, 'Not found')
+  const json = err.toJSON()
+
+  t.is(json.code, -32601)
+  t.is(json.message, 'Not found')
+  t.is(json.data, undefined)
+  t.is('data' in json, false)
+})
+
+test('ErrorCode - has correct values', async (t) => {
+  t.is(ErrorCode.PARSE_ERROR, -32700)
+  t.is(ErrorCode.INVALID_REQUEST, -32600)
+  t.is(ErrorCode.METHOD_NOT_FOUND, -32601)
+  t.is(ErrorCode.INVALID_PARAMS, -32602)
+  t.is(ErrorCode.INTERNAL_ERROR, -32603)
+  t.is(ErrorCode.RESOURCE_NOT_FOUND, -32002)
+})
+
+test('handleRequest - unknown tool throws INVALID_PARAMS', async (t) => {
+  const mcp = createMCPServer()
+
+  try {
+    await mcp.handleRequest('tools/call', { name: 'nonexistent' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INVALID_PARAMS)
+    t.ok(err.message.includes('Unknown tool'))
+  }
+})
+
+test('handleRequest - validation error throws INVALID_PARAMS', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'greet',
+    parameters: z.object({ name: z.string() }),
+    execute: async ({ name }) => `Hello, ${name}`
+  })
+
+  try {
+    await mcp.handleRequest('tools/call', {
+      name: 'greet',
+      arguments: { name: 123 }
+    })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INVALID_PARAMS)
+    t.ok(err.data.issues) // Zod issues attached
+  }
+})
+
+test('handleRequest - unknown method throws METHOD_NOT_FOUND', async (t) => {
+  const mcp = createMCPServer()
+
+  try {
+    await mcp.handleRequest('nonexistent/method', {})
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.METHOD_NOT_FOUND)
+  }
+})
+
+test('handleRequest - resource not found throws RESOURCE_NOT_FOUND', async (t) => {
+  const mcp = createMCPServer()
+
+  try {
+    await mcp.handleRequest('resources/read', { uri: 'unknown://resource' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.RESOURCE_NOT_FOUND)
+  }
+})
+
+test('handleRequest - tool can throw MCPError with custom code', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'ratelimited',
+    execute: async () => {
+      throw new MCPError(-32001, 'Rate limit exceeded', { retryAfter: 30 })
+    }
+  })
+
+  try {
+    await mcp.handleRequest('tools/call', { name: 'ratelimited' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, -32001)
+    t.is(err.message, 'Rate limit exceeded')
+    t.is(err.data.retryAfter, 30)
+  }
+})
+
+test('handleRequest - regular errors become INTERNAL_ERROR', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'broken',
+    execute: async () => {
+      throw new Error('Something unexpected happened')
+    }
+  })
+
+  try {
+    await mcp.handleRequest('tools/call', { name: 'broken' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.is(err.message, 'Something unexpected happened')
+  }
 })

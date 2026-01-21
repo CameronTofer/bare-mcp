@@ -17,6 +17,26 @@
  *   await createStdioTransport(mcp)
  */
 
+import { MCPError, ErrorCode } from './index.js'
+
+/**
+ * Convert an error to JSON-RPC error format.
+ */
+function errorToJsonRpc(err, id) {
+  if (err instanceof MCPError) {
+    return {
+      jsonrpc: '2.0',
+      error: err.toJSON(),
+      id
+    }
+  }
+  return {
+    jsonrpc: '2.0',
+    error: { code: ErrorCode.INTERNAL_ERROR, message: err.message },
+    id
+  }
+}
+
 /**
  * Create stdio transport for an MCP server (Bare runtime).
  *
@@ -53,12 +73,20 @@ export async function createStdioTransport(mcp, options = {}) {
   async function processLine(line) {
     if (!line.trim()) return
 
+    let id = null
     try {
-      const request = JSON.parse(line)
-      const { jsonrpc, method, params, id } = request
+      let request
+      try {
+        request = JSON.parse(line)
+      } catch (parseErr) {
+        throw new MCPError(ErrorCode.PARSE_ERROR, 'Invalid JSON')
+      }
+
+      id = request.id
+      const { jsonrpc, method, params } = request
 
       if (jsonrpc !== '2.0') {
-        throw new Error('Invalid JSON-RPC version')
+        throw new MCPError(ErrorCode.INVALID_REQUEST, 'Invalid JSON-RPC version')
       }
 
       const result = await mcp.handleRequest(method, params || {})
@@ -66,11 +94,7 @@ export async function createStdioTransport(mcp, options = {}) {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', result, id }) + '\n')
     } catch (err) {
       console.error('[MCP-stdio-Bare] Error:', err.message)
-      process.stdout.write(JSON.stringify({
-        jsonrpc: '2.0',
-        error: { code: -32603, message: err.message },
-        id: null
-      }) + '\n')
+      process.stdout.write(JSON.stringify(errorToJsonRpc(err, id)) + '\n')
     }
   }
 

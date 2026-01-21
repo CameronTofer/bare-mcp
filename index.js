@@ -49,6 +49,61 @@
 import { z } from 'zod'
 
 // ============================================================================
+// MCP Error Codes (JSON-RPC 2.0 + MCP-specific)
+// ============================================================================
+
+/**
+ * Standard JSON-RPC 2.0 error codes
+ */
+export const ErrorCode = {
+  // JSON-RPC 2.0 standard errors
+  PARSE_ERROR: -32700,       // Invalid JSON
+  INVALID_REQUEST: -32600,   // Not a valid Request object
+  METHOD_NOT_FOUND: -32601,  // Method does not exist
+  INVALID_PARAMS: -32602,    // Invalid method parameters
+  INTERNAL_ERROR: -32603,    // Internal JSON-RPC error
+
+  // MCP-specific errors (-32000 to -32099 reserved for implementation)
+  RESOURCE_NOT_FOUND: -32002 // Resource not found
+}
+
+/**
+ * MCP Error class for throwing errors with specific codes.
+ *
+ * Tool handlers can throw this to return specific error codes:
+ *
+ * @example
+ * throw new MCPError(ErrorCode.INVALID_PARAMS, 'Missing required field: name')
+ *
+ * @example
+ * throw new MCPError(-32001, 'Rate limit exceeded', { retryAfter: 60 })
+ */
+export class MCPError extends Error {
+  /**
+   * @param {number} code - JSON-RPC error code
+   * @param {string} message - Human-readable error message
+   * @param {object} [data] - Optional additional error data
+   */
+  constructor(code, message, data) {
+    super(message)
+    this.name = 'MCPError'
+    this.code = code
+    this.data = data
+  }
+
+  /**
+   * Convert to JSON-RPC error object format.
+   */
+  toJSON() {
+    const error = { code: this.code, message: this.message }
+    if (this.data !== undefined) {
+      error.data = this.data
+    }
+    return error
+  }
+}
+
+// ============================================================================
 // Zod to JSON Schema Conversion
 // ============================================================================
 
@@ -504,7 +559,7 @@ export function createMCPServer(options = {}) {
       }
     }
 
-    throw new Error(`Resource not found: ${uri}`)
+    throw new MCPError(ErrorCode.RESOURCE_NOT_FOUND, `Resource not found: ${uri}`)
   }
 
   // ========== NOTIFICATIONS ==========
@@ -677,7 +732,7 @@ export function createMCPServer(options = {}) {
 
         if (!tool) {
           recordActivity(toolName, false, `Unknown tool: ${toolName}`)
-          throw new Error(`Unknown tool: ${toolName}`)
+          throw new MCPError(ErrorCode.INVALID_PARAMS, `Unknown tool: ${toolName}`)
         }
 
         try {
@@ -703,7 +758,20 @@ export function createMCPServer(options = {}) {
           }
         } catch (err) {
           recordActivity(toolName, false, err.message)
-          throw err
+
+          // Convert Zod validation errors to INVALID_PARAMS
+          if (err.name === 'ZodError') {
+            const message = err.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ')
+            throw new MCPError(ErrorCode.INVALID_PARAMS, message, { issues: err.issues })
+          }
+
+          // Re-throw MCPError as-is
+          if (err instanceof MCPError) {
+            throw err
+          }
+
+          // Wrap other errors as internal errors
+          throw new MCPError(ErrorCode.INTERNAL_ERROR, err.message)
         }
       }
 
@@ -764,7 +832,7 @@ export function createMCPServer(options = {}) {
         return {}
 
       default:
-        throw new Error(`Unknown method: ${method}`)
+        throw new MCPError(ErrorCode.METHOD_NOT_FOUND, `Unknown method: ${method}`)
     }
   }
 

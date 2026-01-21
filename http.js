@@ -20,6 +20,26 @@
 
 import http from 'node:http'
 import { WebSocketServer } from 'ws'
+import { MCPError, ErrorCode } from './index.js'
+
+/**
+ * Convert an error to JSON-RPC error format.
+ */
+function errorToJsonRpc(err, id) {
+  if (err instanceof MCPError) {
+    return {
+      jsonrpc: '2.0',
+      error: err.toJSON(),
+      id
+    }
+  }
+  // Unknown error - wrap as internal error
+  return {
+    jsonrpc: '2.0',
+    error: { code: ErrorCode.INTERNAL_ERROR, message: err.message },
+    id
+  }
+}
 
 /**
  * Create HTTP transport for an MCP server.
@@ -228,12 +248,20 @@ export async function createHttpTransport(mcp, options = {}) {
       let body = ''
       req.on('data', chunk => { body += chunk })
       req.on('end', async () => {
+        let id = null
         try {
-          const request = JSON.parse(body)
-          const { jsonrpc, method, params, id } = request
+          let request
+          try {
+            request = JSON.parse(body)
+          } catch (parseErr) {
+            throw new MCPError(ErrorCode.PARSE_ERROR, 'Invalid JSON')
+          }
+
+          id = request.id
+          const { jsonrpc, method, params } = request
 
           if (jsonrpc !== '2.0') {
-            throw new Error('Invalid JSON-RPC version')
+            throw new MCPError(ErrorCode.INVALID_REQUEST, 'Invalid JSON-RPC version')
           }
 
           const result = await mcp.handleRequest(method, params || {})
@@ -245,11 +273,7 @@ export async function createHttpTransport(mcp, options = {}) {
           console.error('[MCP-HTTP] Request error:', err.message)
           res.statusCode = 200
           res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({
-            jsonrpc: '2.0',
-            error: { code: -32603, message: err.message },
-            id: null
-          }))
+          res.end(JSON.stringify(errorToJsonRpc(err, id)))
         }
       })
       return
@@ -330,11 +354,7 @@ export async function createHttpTransport(mcp, options = {}) {
 
               ws.send(JSON.stringify({ jsonrpc: '2.0', result, id }))
             } catch (err) {
-              ws.send(JSON.stringify({
-                jsonrpc: '2.0',
-                error: { code: -32603, message: err.message },
-                id
-              }))
+              ws.send(JSON.stringify(errorToJsonRpc(err, id)))
             }
           }
         } catch (err) {

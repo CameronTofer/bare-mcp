@@ -18,6 +18,25 @@
  */
 
 import http from 'bare-http1'
+import { MCPError, ErrorCode } from './index.js'
+
+/**
+ * Convert an error to JSON-RPC error format.
+ */
+function errorToJsonRpc(err, id) {
+  if (err instanceof MCPError) {
+    return {
+      jsonrpc: '2.0',
+      error: err.toJSON(),
+      id
+    }
+  }
+  return {
+    jsonrpc: '2.0',
+    error: { code: ErrorCode.INTERNAL_ERROR, message: err.message },
+    id
+  }
+}
 
 /**
  * Create HTTP transport for an MCP server (Bare runtime).
@@ -180,13 +199,21 @@ export async function createHttpTransport(mcp, options = {}) {
 
     // MCP endpoint (JSON-RPC)
     if (req.method === 'POST' && (req.url === '/mcp' || req.url === '/')) {
+      let id = null
       try {
         const body = await collectBody(req)
-        const request = JSON.parse(body)
-        const { jsonrpc, method, params, id } = request
+        let request
+        try {
+          request = JSON.parse(body)
+        } catch (parseErr) {
+          throw new MCPError(ErrorCode.PARSE_ERROR, 'Invalid JSON')
+        }
+
+        id = request.id
+        const { jsonrpc, method, params } = request
 
         if (jsonrpc !== '2.0') {
-          throw new Error('Invalid JSON-RPC version')
+          throw new MCPError(ErrorCode.INVALID_REQUEST, 'Invalid JSON-RPC version')
         }
 
         const result = await mcp.handleRequest(method, params || {})
@@ -198,11 +225,7 @@ export async function createHttpTransport(mcp, options = {}) {
         console.error('[MCP-HTTP-Bare] Request error:', err.message)
         res.statusCode = 200
         res.setHeader('Content-Type', 'application/json')
-        res.end(JSON.stringify({
-          jsonrpc: '2.0',
-          error: { code: -32603, message: err.message },
-          id: null
-        }))
+        res.end(JSON.stringify(errorToJsonRpc(err, id)))
       }
       return
     }
