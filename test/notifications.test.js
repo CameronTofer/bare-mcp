@@ -231,3 +231,94 @@ test('activity callback - records failed tool calls', async (t) => {
   t.is(activities[0].success, false)
   t.ok(activities[0].error.includes('Intentional failure'))
 })
+
+// ===== Client-to-Server Notifications =====
+// These are notifications sent by MCP clients that servers must handle.
+
+test('notifications/initialized - accepts client initialization notification', async (t) => {
+  const mcp = createMCPServer()
+
+  // Should not throw - this is a valid notification
+  const result = await mcp.handleRequest('notifications/initialized', {})
+
+  t.alike(result, {})
+})
+
+test('notifications/cancelled - accepts cancellation notification', async (t) => {
+  const mcp = createMCPServer()
+
+  // Should not throw - this is a valid notification
+  const result = await mcp.handleRequest('notifications/cancelled', {
+    requestId: 'req-123',
+    reason: 'User cancelled'
+  })
+
+  t.alike(result, {})
+})
+
+test('notifications/roots/list_changed - accepts roots change notification', async (t) => {
+  const mcp = createMCPServer()
+
+  // Should not throw - this is a valid notification
+  const result = await mcp.handleRequest('notifications/roots/list_changed', {})
+
+  t.alike(result, {})
+})
+
+test('setClientNotificationCallback - receives initialized notification', async (t) => {
+  const mcp = createMCPServer()
+  const received = []
+
+  mcp.setClientNotificationCallback((method, params) => {
+    received.push({ method, params })
+  })
+
+  await mcp.handleRequest('notifications/initialized', {})
+
+  t.is(received.length, 1)
+  t.is(received[0].method, 'notifications/initialized')
+})
+
+test('setClientNotificationCallback - receives cancelled notification with params', async (t) => {
+  const mcp = createMCPServer()
+  const received = []
+
+  mcp.setClientNotificationCallback((method, params) => {
+    received.push({ method, params })
+  })
+
+  await mcp.handleRequest('notifications/cancelled', {
+    requestId: 'req-456',
+    reason: 'User aborted'
+  })
+
+  t.is(received.length, 1)
+  t.is(received[0].method, 'notifications/cancelled')
+  t.is(received[0].params.requestId, 'req-456')
+  t.is(received[0].params.reason, 'User aborted')
+})
+
+test('setClientNotificationCallback - receives roots/list_changed notification', async (t) => {
+  const mcp = createMCPServer()
+  const received = []
+
+  mcp.setClientNotificationCallback((method, params) => {
+    received.push({ method, params })
+  })
+
+  await mcp.handleRequest('notifications/roots/list_changed', {})
+
+  t.is(received.length, 1)
+  t.is(received[0].method, 'notifications/roots/list_changed')
+})
+
+test('client notifications work without callback set', async (t) => {
+  const mcp = createMCPServer()
+
+  // Should not throw even without callback
+  await mcp.handleRequest('notifications/initialized', {})
+  await mcp.handleRequest('notifications/cancelled', { requestId: '123' })
+  await mcp.handleRequest('notifications/roots/list_changed', {})
+
+  t.pass()
+})

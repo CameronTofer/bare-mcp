@@ -49,6 +49,7 @@ function errorToJsonRpc(err, id) {
  * @param {number} [options.port=3000] - HTTP port
  * @param {string} [options.host='0.0.0.0'] - Bind address
  * @param {boolean} [options.websocket=true] - Enable WebSocket support
+ * @param {boolean} [options.verbose=false] - Enable verbose logging of requests/notifications
  * @param {function} [options.onActivity] - Activity callback (entry) => void
  * @returns {Promise<HttpTransport>}
  */
@@ -57,8 +58,13 @@ export async function createHttpTransport(mcp, options = {}) {
     port = 3000,
     host = '0.0.0.0',
     websocket = true,
+    verbose = false,
     onActivity
   } = options
+
+  const log = verbose
+    ? (msg, ...args) => console.error(`[MCP-HTTP] ${msg}`, ...args)
+    : () => {}
 
   // Client tracking
   const activityLog = []
@@ -259,16 +265,32 @@ export async function createHttpTransport(mcp, options = {}) {
 
           id = request.id
           const { jsonrpc, method, params } = request
+          const isNotification = id === undefined || id === null
 
           if (jsonrpc !== '2.0') {
             throw new MCPError(ErrorCode.INVALID_REQUEST, 'Invalid JSON-RPC version')
+          }
+
+          // Verbose logging
+          if (isNotification) {
+            log(`← notification: ${method}`, params || {})
+          } else {
+            log(`← request[${id}]: ${method}`, params || {})
           }
 
           const result = await mcp.handleRequest(method, params || {})
 
           res.statusCode = 200
           res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ jsonrpc: '2.0', result, id }))
+          // For notifications (no id), return 204 No Content per HTTP semantics
+          if (isNotification) {
+            log(`→ notification handled (204 No Content)`)
+            res.statusCode = 204
+            res.end()
+          } else {
+            log(`→ response[${id}]:`, result)
+            res.end(JSON.stringify({ jsonrpc: '2.0', result, id }))
+          }
         } catch (err) {
           console.error('[MCP-HTTP] Request error:', err.message)
           res.statusCode = 200
@@ -338,6 +360,15 @@ export async function createHttpTransport(mcp, options = {}) {
           // Handle JSON-RPC requests over WebSocket
           if (msg.jsonrpc === '2.0' && msg.method) {
             const { method, params, id } = msg
+            const isNotification = id === undefined || id === null
+
+            // Verbose logging
+            if (isNotification) {
+              log(`← ws notification: ${method}`, params || {})
+            } else {
+              log(`← ws request[${id}]: ${method}`, params || {})
+            }
+
             try {
               // Inject subscriber ID for subscription methods
               const enrichedParams = { ...params, _subscriberId: clientId }
@@ -352,9 +383,18 @@ export async function createHttpTransport(mcp, options = {}) {
                 if (client) client.subscriptions.delete(params.uri)
               }
 
-              ws.send(JSON.stringify({ jsonrpc: '2.0', result, id }))
+              // Only send response for requests (has id), not for notifications
+              if (isNotification) {
+                log(`→ ws notification handled (no response)`)
+              } else {
+                log(`→ ws response[${id}]:`, result)
+                ws.send(JSON.stringify({ jsonrpc: '2.0', result, id }))
+              }
             } catch (err) {
-              ws.send(JSON.stringify(errorToJsonRpc(err, id)))
+              // Only send error response for requests, not notifications
+              if (!isNotification) {
+                ws.send(JSON.stringify(errorToJsonRpc(err, id)))
+              }
             }
           }
         } catch (err) {

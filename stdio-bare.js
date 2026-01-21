@@ -91,7 +91,10 @@ export async function createStdioTransport(mcp, options = {}) {
 
       const result = await mcp.handleRequest(method, params || {})
 
-      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', result, id }) + '\n')
+      // Only send response for requests (has id), not for notifications
+      if (id !== undefined && id !== null) {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', result, id }) + '\n')
+      }
     } catch (err) {
       console.error('[MCP-stdio-Bare] Error:', err.message)
       process.stdout.write(JSON.stringify(errorToJsonRpc(err, id)) + '\n')

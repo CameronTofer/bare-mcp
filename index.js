@@ -198,6 +198,7 @@ export function createMCPServer(options = {}) {
   const subscriptions = new Map()   // uri -> Set of subscriber IDs
   let onActivity = () => {} // Activity callback (set by transport)
   let onNotification = () => {} // Notification callback (set by transport)
+  let onClientNotification = null // Optional callback for client notifications
 
   // ========== TOOLS ==========
 
@@ -574,6 +575,25 @@ export function createMCPServer(options = {}) {
   }
 
   /**
+   * Set callback for client-to-server notifications.
+   * Apps can use this to react to client events like cancellation or roots changes.
+   *
+   * @param {function} callback - (method, params) => void
+   *   - method: Notification method (e.g., 'notifications/cancelled')
+   *   - params: Notification parameters
+   *
+   * @example
+   * mcp.setClientNotificationCallback((method, params) => {
+   *   if (method === 'notifications/cancelled') {
+   *     abortOperation(params.requestId)
+   *   }
+   * })
+   */
+  function setClientNotificationCallback(callback) {
+    onClientNotification = callback
+  }
+
+  /**
    * Send a notification (broadcast to all clients).
    * @param {string} method - Notification method
    * @param {object} params - Notification parameters
@@ -831,6 +851,26 @@ export function createMCPServer(options = {}) {
       case 'ping':
         return {}
 
+      // ===== CLIENT NOTIFICATIONS =====
+      // These are sent from client to server and don't require meaningful responses.
+      // Per JSON-RPC 2.0, notifications have no id and expect no response,
+      // but we return {} so transports can handle them uniformly.
+
+      case 'notifications/initialized':
+        // Client signals initialization is complete.
+        if (onClientNotification) onClientNotification(method, params)
+        return {}
+
+      case 'notifications/cancelled':
+        // Client requests cancellation of a pending request.
+        if (onClientNotification) onClientNotification(method, params)
+        return {}
+
+      case 'notifications/roots/list_changed':
+        // Client's root list has changed.
+        if (onClientNotification) onClientNotification(method, params)
+        return {}
+
       default:
         throw new MCPError(ErrorCode.METHOD_NOT_FOUND, `Unknown method: ${method}`)
     }
@@ -861,7 +901,7 @@ export function createMCPServer(options = {}) {
     unsubscribe,
     getSubscribers,
 
-    // Notifications
+    // Notifications (server → client)
     setNotificationCallback,
     notify,
     notifyTargeted,
@@ -869,6 +909,9 @@ export function createMCPServer(options = {}) {
     notifyResourceListChanged,
     notifyToolListChanged,
     notifyProgress,
+
+    // Client notifications (client → server)
+    setClientNotificationCallback,
 
     // Activity tracking
     setActivityCallback,
