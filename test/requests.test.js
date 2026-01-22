@@ -1,5 +1,5 @@
 import test from 'brittle'
-import { createMCPServer, z, MCPError, ErrorCode } from '../index.js'
+import { createMCPServer, MCPError, ErrorCode } from '../index.js'
 
 test('handleRequest - initialize returns server info', async (t) => {
   const mcp = createMCPServer({ name: 'test-server', version: '1.2.3' })
@@ -19,7 +19,11 @@ test('handleRequest - tools/list returns registered tools', async (t) => {
   mcp.addTool({
     name: 'echo',
     description: 'Echo a message',
-    parameters: z.object({ msg: z.string() }),
+    inputSchema: {
+      type: 'object',
+      properties: { msg: { type: 'string' } },
+      required: ['msg']
+    },
     execute: async ({ msg }) => msg
   })
 
@@ -37,7 +41,11 @@ test('handleRequest - tools/call executes tool', async (t) => {
 
   mcp.addTool({
     name: 'add',
-    parameters: z.object({ a: z.number(), b: z.number() }),
+    inputSchema: {
+      type: 'object',
+      properties: { a: { type: 'number' }, b: { type: 'number' } },
+      required: ['a', 'b']
+    },
     execute: async ({ a, b }) => JSON.stringify({ sum: a + b })
   })
 
@@ -51,25 +59,6 @@ test('handleRequest - tools/call executes tool', async (t) => {
   t.is(JSON.parse(result.content[0].text).sum, 5)
 })
 
-test('handleRequest - tools/call validates parameters', async (t) => {
-  const mcp = createMCPServer()
-
-  mcp.addTool({
-    name: 'greet',
-    parameters: z.object({ name: z.string() }),
-    execute: async ({ name }) => `Hello, ${name}`
-  })
-
-  try {
-    await mcp.handleRequest('tools/call', {
-      name: 'greet',
-      arguments: { name: 123 } // Should be string
-    })
-    t.fail('Should have thrown validation error')
-  } catch (err) {
-    t.ok(err.message || err.issues)
-  }
-})
 
 test('handleRequest - tools/call throws for unknown tool', async (t) => {
   const mcp = createMCPServer()
@@ -204,7 +193,11 @@ test('tools/list - includes tool annotations when provided', async (t) => {
   mcp.addTool({
     name: 'search',
     description: 'Search the web',
-    parameters: z.object({ query: z.string() }),
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query']
+    },
     execute: async ({ query }) => `Results for: ${query}`,
     annotations: {
       title: 'Web Search',
@@ -420,28 +413,6 @@ test('handleRequest - unknown tool throws INVALID_PARAMS', async (t) => {
     t.ok(err instanceof MCPError)
     t.is(err.code, ErrorCode.INVALID_PARAMS)
     t.ok(err.message.includes('Unknown tool'))
-  }
-})
-
-test('handleRequest - validation error throws INVALID_PARAMS', async (t) => {
-  const mcp = createMCPServer()
-
-  mcp.addTool({
-    name: 'greet',
-    parameters: z.object({ name: z.string() }),
-    execute: async ({ name }) => `Hello, ${name}`
-  })
-
-  try {
-    await mcp.handleRequest('tools/call', {
-      name: 'greet',
-      arguments: { name: 123 }
-    })
-    t.fail('Should have thrown')
-  } catch (err) {
-    t.ok(err instanceof MCPError)
-    t.is(err.code, ErrorCode.INVALID_PARAMS)
-    t.ok(err.data.issues) // Zod issues attached
   }
 })
 

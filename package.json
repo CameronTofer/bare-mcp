@@ -47,9 +47,6 @@
     "pear",
     "holepunch"
   ],
-  "dependencies": {
-    "zod": "^3.24.0"
-  },
   "peerDependencies": {
     "ws": "^8.0.0",
     "bare-http1": "^4.0.0"

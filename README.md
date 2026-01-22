@@ -17,7 +17,7 @@ Works on **Node.js** and **Bare runtime** (Pear/Holepunch).
 ## Quick Start
 
 ```javascript
-import { createMCPServer, z } from 'bare-mcp'
+import { createMCPServer } from 'bare-mcp'
 import { createHttpTransport } from 'bare-mcp/http'
 
 // Create server
@@ -30,9 +30,13 @@ const mcp = createMCPServer({
 mcp.addTool({
   name: 'greet',
   description: 'Say hello to someone',
-  parameters: z.object({
-    name: z.string().describe('Name to greet')
-  }),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Name to greet' }
+    },
+    required: ['name']
+  },
   execute: async ({ name }) => `Hello, ${name}!`
 })
 
@@ -48,11 +52,15 @@ Tools are functions that AI clients can invoke.
 mcp.addTool({
   name: 'calculate',
   description: 'Perform arithmetic',
-  parameters: z.object({
-    a: z.number(),
-    b: z.number(),
-    op: z.enum(['add', 'subtract', 'multiply', 'divide'])
-  }),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      a: { type: 'number' },
+      b: { type: 'number' },
+      op: { type: 'string', enum: ['add', 'subtract', 'multiply', 'divide'] }
+    },
+    required: ['a', 'b', 'op']
+  },
   execute: async ({ a, b, op }) => {
     const ops = { add: a + b, subtract: a - b, multiply: a * b, divide: a / b }
     return JSON.stringify({ result: ops[op] })
@@ -71,7 +79,11 @@ Tools can include annotations that describe their behavior:
 mcp.addTool({
   name: 'search',
   description: 'Search the web',
-  parameters: z.object({ query: z.string() }),
+  inputSchema: {
+    type: 'object',
+    properties: { query: { type: 'string' } },
+    required: ['query']
+  },
   execute: async ({ query }) => `Results for: ${query}`,
   annotations: {
     title: 'Web Search',        // Human-readable title
@@ -84,7 +96,11 @@ mcp.addTool({
 mcp.addTool({
   name: 'delete_file',
   description: 'Delete a file',
-  parameters: z.object({ path: z.string() }),
+  inputSchema: {
+    type: 'object',
+    properties: { path: { type: 'string' } },
+    required: ['path']
+  },
   execute: async ({ path }) => { /* ... */ },
   annotations: {
     title: 'Delete File',
@@ -140,7 +156,11 @@ import { MCPError, ErrorCode } from 'bare-mcp'
 
 mcp.addTool({
   name: 'get_user',
-  parameters: z.object({ id: z.string() }),
+  inputSchema: {
+    type: 'object',
+    properties: { id: { type: 'string' } },
+    required: ['id']
+  },
   execute: async ({ id }) => {
     const user = await db.findUser(id)
     if (!user) {

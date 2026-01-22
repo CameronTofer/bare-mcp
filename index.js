@@ -13,7 +13,11 @@
  *   mcp.addTool({
  *     name: 'greet',
  *     description: 'Say hello',
- *     parameters: z.object({ name: z.string() }),
+ *     inputSchema: {
+ *       type: 'object',
+ *       properties: { name: { type: 'string' } },
+ *       required: ['name']
+ *     },
  *     execute: async ({ name }) => `Hello, ${name}!`
  *   })
  *
@@ -46,7 +50,6 @@
  *   await createHttpTransport(mcp, { port: 3000 })
  */
 
-import { z } from 'zod'
 
 // ============================================================================
 // MCP Error Codes (JSON-RPC 2.0 + MCP-specific)
@@ -104,75 +107,6 @@ export class MCPError extends Error {
 }
 
 // ============================================================================
-// Zod to JSON Schema Conversion
-// ============================================================================
-
-/**
- * Convert Zod schema to JSON Schema for MCP tool definitions.
- * Supports common Zod types: object, string, number, boolean, enum, optional, union, array.
- */
-export function zodToJsonSchema(schema) {
-  if (schema instanceof z.ZodObject) {
-    const shape = schema._def.shape()
-    const properties = {}
-    const required = []
-
-    for (const [key, value] of Object.entries(shape)) {
-      properties[key] = zodToJsonSchema(value)
-      if (!(value instanceof z.ZodOptional)) {
-        required.push(key)
-      }
-    }
-
-    const result = { type: 'object', properties }
-    if (required.length) result.required = required
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  if (schema instanceof z.ZodString) {
-    const result = { type: 'string' }
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  if (schema instanceof z.ZodNumber) {
-    const result = { type: 'number' }
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  if (schema instanceof z.ZodBoolean) {
-    const result = { type: 'boolean' }
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  if (schema instanceof z.ZodEnum) {
-    const result = { type: 'string', enum: schema._def.values }
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  if (schema instanceof z.ZodOptional) {
-    return zodToJsonSchema(schema._def.innerType)
-  }
-
-  if (schema instanceof z.ZodUnion) {
-    return { anyOf: schema._def.options.map(zodToJsonSchema) }
-  }
-
-  if (schema instanceof z.ZodArray) {
-    const result = { type: 'array', items: zodToJsonSchema(schema._def.type) }
-    if (schema._def.description) result.description = schema._def.description
-    return result
-  }
-
-  // Fallback for unsupported types
-  return { type: 'object' }
-}
-
-// ============================================================================
 // MCP Server Factory
 // ============================================================================
 
@@ -208,7 +142,7 @@ export function createMCPServer(options = {}) {
    * @param {object} tool
    * @param {string} tool.name - Tool name (unique identifier)
    * @param {string} tool.description - Human-readable description
-   * @param {z.ZodSchema} tool.parameters - Zod schema for parameters
+   * @param {object} [tool.inputSchema] - JSON Schema for parameters (type: 'object')
    * @param {function} tool.execute - Async function (params) => result (string or content array)
    * @param {object} [tool.annotations] - Optional tool annotations (ToolAnnotations)
    * @param {string} [tool.annotations.title] - Human-readable title
@@ -224,7 +158,7 @@ export function createMCPServer(options = {}) {
     tools.set(tool.name, {
       name: tool.name,
       description: tool.description || '',
-      parameters: tool.parameters || z.object({}),
+      inputSchema: tool.inputSchema || { type: 'object', properties: {} },
       execute: tool.execute,
       annotations: tool.annotations || null
     })
@@ -741,7 +675,7 @@ export function createMCPServer(options = {}) {
           tools: Array.from(tools.values()).map(t => ({
             name: t.name,
             description: t.description,
-            inputSchema: zodToJsonSchema(t.parameters),
+            inputSchema: t.inputSchema,
             ...(t.annotations && { annotations: t.annotations })
           }))
         }
@@ -756,9 +690,7 @@ export function createMCPServer(options = {}) {
         }
 
         try {
-          // Validate parameters with Zod
-          const validated = tool.parameters.parse(args || {})
-          const result = await tool.execute(validated)
+          const result = await tool.execute(args || {})
 
           recordActivity(toolName, true)
 
@@ -921,6 +853,3 @@ export function createMCPServer(options = {}) {
     handleRequest
   }
 }
-
-// Re-export zod for convenience
-export { z }

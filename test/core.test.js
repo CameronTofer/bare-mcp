@@ -1,5 +1,5 @@
 import test from 'brittle'
-import { createMCPServer, z } from '../index.js'
+import { createMCPServer } from '../index.js'
 
 test('createMCPServer - creates server with defaults', async (t) => {
   const mcp = createMCPServer()
@@ -29,7 +29,11 @@ test('addTool - registers a tool', async (t) => {
   mcp.addTool({
     name: 'greet',
     description: 'Say hello',
-    parameters: z.object({ name: z.string() }),
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name']
+    },
     execute: async ({ name }) => `Hello, ${name}!`
   })
 
