@@ -144,9 +144,9 @@ export async function createHttpTransport(mcp, options = {}) {
     }
   }
 
-  // Broadcast to all SSE clients
+  // Broadcast to all SSE clients (MCP SSE format: event: message)
   function broadcastToSseClients(message) {
-    const data = `data: ${JSON.stringify(message)}\n\n`
+    const data = `event: message\ndata: ${JSON.stringify(message)}\n\n`
     for (const [res] of sseClients) {
       try {
         res.write(data)
@@ -156,9 +156,9 @@ export async function createHttpTransport(mcp, options = {}) {
     }
   }
 
-  // Send to specific SSE clients by ID
+  // Send to specific SSE clients by ID (MCP SSE format: event: message)
   function sendToSseClients(message, targetIds) {
-    const data = `data: ${JSON.stringify(message)}\n\n`
+    const data = `event: message\ndata: ${JSON.stringify(message)}\n\n`
     for (const [res, client] of sseClients) {
       if (targetIds.has(client.id)) {
         try {
@@ -227,8 +227,8 @@ export async function createHttpTransport(mcp, options = {}) {
       return
     }
 
-    // SSE endpoint for server-to-client notifications
-    if (req.method === 'GET' && req.url === '/sse') {
+    // SSE endpoint - MCP SSE Transport Protocol
+    if (req.method === 'GET' && req.url.startsWith('/sse')) {
       const clientId = generateClientId()
 
       res.setHeader('Content-Type', 'text/event-stream')
@@ -236,8 +236,9 @@ export async function createHttpTransport(mcp, options = {}) {
       res.setHeader('Connection', 'keep-alive')
       res.flushHeaders()
 
-      // Send initial connection event
-      res.write(`data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`)
+      // MCP SSE protocol: send endpoint event with POST URL
+      const messageEndpoint = `http://${req.headers.host}/message?sessionId=${clientId}`
+      res.write(`event: endpoint\ndata: ${messageEndpoint}\n\n`)
 
       sseClients.set(res, { id: clientId })
       console.error(`[MCP-HTTP] SSE client connected: ${clientId}`)
@@ -245,6 +246,69 @@ export async function createHttpTransport(mcp, options = {}) {
       req.on('close', () => {
         sseClients.delete(res)
         console.error(`[MCP-HTTP] SSE client disconnected: ${clientId}`)
+      })
+      return
+    }
+
+    // MCP SSE message endpoint - receives JSON-RPC POSTs and sends responses via SSE
+    if (req.method === 'POST' && req.url.startsWith('/message')) {
+      const urlParams = new URL(req.url, `http://${req.headers.host}`).searchParams
+      const sessionId = urlParams.get('sessionId')
+      
+      // Find the SSE client for this session
+      let sseRes = null
+      for (const [res, client] of sseClients) {
+        if (client.id === sessionId) {
+          sseRes = res
+          break
+        }
+      }
+
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', async () => {
+        let id = null
+        try {
+          let request
+          try {
+            request = JSON.parse(body)
+          } catch (parseErr) {
+            throw new MCPError(ErrorCode.PARSE_ERROR, 'Invalid JSON')
+          }
+
+          id = request.id
+          const { jsonrpc, method, params } = request
+          const isNotification = id === undefined || id === null
+
+          if (jsonrpc !== '2.0') {
+            throw new MCPError(ErrorCode.INVALID_REQUEST, 'Invalid JSON-RPC version')
+          }
+
+          log(isNotification ? `← notification: ${method}` : `← request[${id}]: ${method}`, params || {})
+
+          const result = await mcp.handleRequest(method, params || {})
+
+          // Send response via SSE if we have a session
+          if (sseRes && !isNotification) {
+            const response = { jsonrpc: '2.0', result, id }
+            sseRes.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`)
+            log(`→ response[${id}] via SSE:`, result)
+          }
+
+          res.statusCode = 202
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ accepted: true }))
+        } catch (err) {
+          console.error('[MCP-HTTP] SSE message error:', err.message)
+          
+          if (sseRes && id !== null) {
+            sseRes.write(`event: message\ndata: ${JSON.stringify(errorToJsonRpc(err, id))}\n\n`)
+          }
+          
+          res.statusCode = 202
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ accepted: true }))
+        }
       })
       return
     }
