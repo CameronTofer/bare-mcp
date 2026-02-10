@@ -4,6 +4,15 @@
   "description": "Minimal, general-purpose MCP (Model Context Protocol) server library",
   "type": "module",
   "license": "MIT",
+  "author": "Cameron Tofer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CameronTofer/bare-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CameronTofer/bare-mcp/issues"
+  },
+  "homepage": "https://github.com/CameronTofer/bare-mcp#readme",
   "main": "index.js",
   "scripts": {
     "test": "npm run test:node && npm run test:bare",
@@ -35,7 +44,8 @@
     "http-bare.js",
     "stdio.js",
     "stdio-bare.js",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
     "mcp",
