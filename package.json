@@ -1,6 +1,6 @@
 {
   "name": "bare-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Minimal, general-purpose MCP (Model Context Protocol) server library",
   "type": "module",
   "license": "MIT",
