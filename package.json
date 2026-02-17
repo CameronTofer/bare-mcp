@@ -25,25 +25,16 @@
   },
   "exports": {
     ".": "./index.js",
-    "./http": {
-      "bare": "./http-bare.js",
-      "default": "./http.js"
-    },
-    "./stdio": {
-      "bare": "./stdio-bare.js",
-      "default": "./stdio.js"
-    },
-    "./http-bare": "./http-bare.js",
-    "./http-node": "./http.js",
-    "./stdio-bare": "./stdio-bare.js",
-    "./stdio-node": "./stdio.js"
+    "./http": "./lib/http.js",
+    "./stdio": "./lib/stdio.js",
+    "./http-node": "./lib/http-node.js",
+    "./http-bare": "./lib/http-bare.js",
+    "./stdio-node": "./lib/stdio-node.js",
+    "./stdio-bare": "./lib/stdio-bare.js"
   },
   "files": [
     "index.js",
-    "http.js",
-    "http-bare.js",
-    "stdio.js",
-    "stdio-bare.js",
+    "lib/",
     "README.md",
     "LICENSE"
   ],
@@ -57,13 +48,12 @@
     "pear",
     "holepunch"
   ],
-  "peerDependencies": {
+  "dependencies": {
+    "which-runtime": "^1.0.0"
+  },
+  "optionalDependencies": {
     "ws": "^8.0.0",
     "bare-http1": "^4.0.0"
-  },
-  "peerDependenciesMeta": {
-    "ws": { "optional": true },
-    "bare-http1": { "optional": true }
   },
   "devDependencies": {
     "brittle": "^3.0.0",
