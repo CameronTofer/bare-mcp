@@ -106,6 +106,27 @@ export class MCPError extends Error {
   }
 }
 
+/**
+ * Convert an error to JSON-RPC error format.
+ * @param {Error} err - The error to convert
+ * @param {*} id - JSON-RPC request id
+ * @returns {object} JSON-RPC error response
+ */
+export function errorToJsonRpc(err, id) {
+  if (err instanceof MCPError) {
+    return {
+      jsonrpc: '2.0',
+      error: err.toJSON(),
+      id
+    }
+  }
+  return {
+    jsonrpc: '2.0',
+    error: { code: ErrorCode.INTERNAL_ERROR, message: err.message },
+    id
+  }
+}
+
 // ============================================================================
 // Input Schema Validation
 // ============================================================================
@@ -122,6 +143,9 @@ export class MCPError extends Error {
  */
 export function validateArgs(schema, args) {
   if (!schema || !schema.properties) return args
+
+  // Shallow copy to avoid mutating the caller's object
+  args = { ...args }
 
   const properties = schema.properties
   const required = schema.required || []
@@ -209,7 +233,7 @@ export function validateArgs(schema, args) {
  * @param {object} options
  * @param {string} options.name - Server name (shown to clients)
  * @param {string} options.version - Server version
- * @param {string} [options.protocolVersion='2024-11-05'] - MCP protocol version
+ * @param {string} [options.protocolVersion='2025-11-25'] - MCP protocol version
  * @returns {MCPServer}
  */
 export function createMCPServer(options = {}) {
@@ -222,6 +246,7 @@ export function createMCPServer(options = {}) {
   const tools = new Map()
   const resources = new Map()       // uri -> resource definition
   const resourceTemplates = new Map() // uriTemplate -> template definition
+  const templateRegexCache = new Map() // uriTemplate -> { regex, captures }
   const subscriptions = new Map()   // uri -> Set of subscriber IDs
   let onActivity = () => {} // Activity callback (set by transport)
   let onNotification = () => {} // Notification callback (set by transport)
@@ -252,6 +277,7 @@ export function createMCPServer(options = {}) {
       name: tool.name,
       description: tool.description || '',
       inputSchema: tool.inputSchema || { type: 'object', properties: {} },
+      outputSchema: tool.outputSchema || null,
       execute: tool.execute,
       annotations: tool.annotations || null
     })
@@ -507,7 +533,12 @@ export function createMCPServer(options = {}) {
    */
   function matchTemplate(uri) {
     for (const [uriTemplate, template] of resourceTemplates) {
-      const { regex, captures } = buildTemplateRegex(uriTemplate)
+      let cached = templateRegexCache.get(uriTemplate)
+      if (!cached) {
+        cached = buildTemplateRegex(uriTemplate)
+        templateRegexCache.set(uriTemplate, cached)
+      }
+      const { regex, captures } = cached
 
       const match = uri.match(regex)
       if (match) {
@@ -769,6 +800,7 @@ export function createMCPServer(options = {}) {
             name: t.name,
             description: t.description,
             inputSchema: t.inputSchema,
+            ...(t.outputSchema && { outputSchema: t.outputSchema }),
             ...(t.annotations && { annotations: t.annotations })
           }))
         }
@@ -849,7 +881,7 @@ export function createMCPServer(options = {}) {
 
       case 'resources/read': {
         const { uri } = params
-        if (!uri) throw new Error('Missing uri parameter')
+        if (!uri) throw new MCPError(ErrorCode.INVALID_PARAMS, 'Missing uri parameter')
 
         const content = await readResource(uri)
         return {
@@ -859,7 +891,7 @@ export function createMCPServer(options = {}) {
 
       case 'resources/subscribe': {
         const { uri } = params
-        if (!uri) throw new Error('Missing uri parameter')
+        if (!uri) throw new MCPError(ErrorCode.INVALID_PARAMS, 'Missing uri parameter')
         // subscriberId comes from transport layer (connection ID)
         const subscriberId = params._subscriberId || 'default'
         subscribe(uri, subscriberId)
@@ -868,7 +900,7 @@ export function createMCPServer(options = {}) {
 
       case 'resources/unsubscribe': {
         const { uri } = params
-        if (!uri) throw new Error('Missing uri parameter')
+        if (!uri) throw new MCPError(ErrorCode.INVALID_PARAMS, 'Missing uri parameter')
         const subscriberId = params._subscriberId || 'default'
         unsubscribe(uri, subscriberId)
         return {}
