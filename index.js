@@ -107,6 +107,99 @@ export class MCPError extends Error {
 }
 
 // ============================================================================
+// Input Schema Validation
+// ============================================================================
+
+/**
+ * Validate args against a JSON Schema inputSchema.
+ * Applies defaults, checks required fields, and validates each property.
+ * Returns the args object (with defaults applied).
+ *
+ * @param {object} schema - JSON Schema (type: 'object')
+ * @param {object} args - The arguments to validate
+ * @returns {object} args with defaults applied
+ * @throws {MCPError} on first validation failure
+ */
+export function validateArgs(schema, args) {
+  if (!schema || !schema.properties) return args
+
+  const properties = schema.properties
+  const required = schema.required || []
+
+  // Apply defaults
+  for (const [name, prop] of Object.entries(properties)) {
+    if (args[name] === undefined && prop.default !== undefined) {
+      args[name] = prop.default
+    }
+  }
+
+  // Check required
+  for (const name of required) {
+    if (args[name] === undefined) {
+      throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: required`)
+    }
+  }
+
+  // Validate each provided property
+  for (const [name, prop] of Object.entries(properties)) {
+    const value = args[name]
+    if (value === undefined) continue
+
+    // Type check
+    if (prop.type) {
+      const actual = Array.isArray(value) ? 'array' : typeof value
+      if (prop.type === 'integer') {
+        if (typeof value !== 'number' || !Number.isInteger(value)) {
+          throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be an integer`)
+        }
+      } else if (actual !== prop.type) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be ${prop.type}`)
+      }
+    }
+
+    // Enum
+    if (prop.enum && !prop.enum.includes(value)) {
+      throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be one of ${prop.enum.join(', ')}`)
+    }
+
+    // String constraints
+    if (typeof value === 'string') {
+      if (prop.minLength !== undefined && value.length < prop.minLength) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be at least ${prop.minLength} characters`)
+      }
+      if (prop.maxLength !== undefined && value.length > prop.maxLength) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be at most ${prop.maxLength} characters`)
+      }
+      if (prop.pattern !== undefined && !new RegExp(prop.pattern).test(value)) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must match pattern ${prop.pattern}`)
+      }
+    }
+
+    // Numeric constraints
+    if (typeof value === 'number') {
+      if (prop.minimum !== undefined && value < prop.minimum) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be >= ${prop.minimum}`)
+      }
+      if (prop.maximum !== undefined && value > prop.maximum) {
+        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be <= ${prop.maximum}`)
+      }
+    }
+
+    // Array item type check
+    if (Array.isArray(value) && prop.items && prop.items.type) {
+      for (let i = 0; i < value.length; i++) {
+        const itemActual = typeof value[i]
+        if (itemActual !== prop.items.type) {
+          throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}[${i}]: must be ${prop.items.type}`)
+        }
+      }
+    }
+  }
+
+  return args
+}
+
+// ============================================================================
 // MCP Server Factory
 // ============================================================================
 
@@ -690,7 +783,8 @@ export function createMCPServer(options = {}) {
         }
 
         try {
-          const result = await tool.execute(args || {})
+          const validatedArgs = validateArgs(tool.inputSchema, args || {})
+          const result = await tool.execute(validatedArgs)
 
           recordActivity(toolName, true)
 
