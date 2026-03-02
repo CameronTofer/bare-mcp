@@ -1,5 +1,5 @@
 import test from 'brittle'
-import { validateArgs, ErrorCode, MCPError, createMCPServer } from '../index.js'
+import { validateArgs, validateOutput, ErrorCode, MCPError, createMCPServer } from '../index.js'
 
 test('validateArgs - no schema returns args unchanged', async (t) => {
   const args = { foo: 'bar' }
@@ -306,4 +306,194 @@ test('integration - tool with schema applies defaults', async (t) => {
   const result = await mcp.handleRequest('tools/call', { name: 'defaulted', arguments: {} })
   const parsed = JSON.parse(result.content[0].text)
   t.is(parsed.k, 10)
+})
+
+// ============================================================================
+// validateOutput Tests
+// ============================================================================
+
+test('validateOutput - no schema is a no-op', async (t) => {
+  validateOutput(null, { anything: true })
+  validateOutput({}, { anything: true })
+  validateOutput({ type: 'object' }, { anything: true })
+  t.pass()
+})
+
+test('validateOutput - valid output passes', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      count: { type: 'number' }
+    },
+    required: ['id']
+  }
+  validateOutput(schema, { id: 'abc', count: 5 })
+  t.pass()
+})
+
+test('validateOutput - missing required field throws INTERNAL_ERROR', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' }
+    },
+    required: ['id']
+  }
+  try {
+    validateOutput(schema, {})
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.ok(err.message.includes('id'))
+    t.ok(err.message.includes('required'))
+  }
+})
+
+test('validateOutput - wrong type throws INTERNAL_ERROR', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      count: { type: 'number' }
+    }
+  }
+  try {
+    validateOutput(schema, { count: 'not-a-number' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.ok(err.message.includes('count'))
+  }
+})
+
+test('validateOutput - string pattern violation throws INTERNAL_ERROR', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      id: { type: 'string', pattern: '^[a-f0-9]+$' }
+    }
+  }
+  try {
+    validateOutput(schema, { id: 'INVALID!' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.ok(err.message.includes('pattern'))
+  }
+})
+
+test('validateOutput - extra properties are ignored', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' }
+    },
+    required: ['id']
+  }
+  validateOutput(schema, { id: 'abc', extra: 'stuff', more: 123 })
+  t.pass()
+})
+
+test('validateOutput - array item type check', async (t) => {
+  const schema = {
+    type: 'object',
+    properties: {
+      tags: { type: 'array', items: { type: 'string' } }
+    }
+  }
+  validateOutput(schema, { tags: ['a', 'b'] })
+
+  try {
+    validateOutput(schema, { tags: ['a', 42] })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.ok(err.message.includes('tags[1]'))
+  }
+})
+
+test('integration - tool with outputSchema validates structuredContent', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'valid-output',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' }
+      },
+      required: ['id']
+    },
+    execute: async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+      structuredContent: { id: 'abc123' }
+    })
+  })
+
+  const result = await mcp.handleRequest('tools/call', { name: 'valid-output' })
+  t.is(result.structuredContent.id, 'abc123')
+})
+
+test('integration - tool with outputSchema rejects bad structuredContent', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'bad-output',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' }
+      },
+      required: ['id']
+    },
+    execute: async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+      structuredContent: { wrong: 'field' }
+    })
+  })
+
+  try {
+    await mcp.handleRequest('tools/call', { name: 'bad-output' })
+    t.fail('Should have thrown')
+  } catch (err) {
+    t.ok(err instanceof MCPError)
+    t.is(err.code, ErrorCode.INTERNAL_ERROR)
+    t.ok(err.message.includes('id'))
+  }
+})
+
+test('integration - tool without outputSchema skips validation', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'no-schema',
+    execute: async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+      structuredContent: { anything: 'goes' }
+    })
+  })
+
+  const result = await mcp.handleRequest('tools/call', { name: 'no-schema' })
+  t.is(result.structuredContent.anything, 'goes')
+})
+
+test('integration - tool with outputSchema but no structuredContent skips validation', async (t) => {
+  const mcp = createMCPServer()
+
+  mcp.addTool({
+    name: 'text-only',
+    outputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id']
+    },
+    execute: async () => ({
+      content: [{ type: 'text', text: 'no structured data' }]
+    })
+  })
+
+  const result = await mcp.handleRequest('tools/call', { name: 'text-only' })
+  t.is(result.content[0].text, 'no structured data')
 })

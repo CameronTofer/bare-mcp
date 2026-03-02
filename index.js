@@ -128,8 +128,68 @@ export function errorToJsonRpc(err, id) {
 }
 
 // ============================================================================
-// Input Schema Validation
+// Schema Validation
 // ============================================================================
+
+/**
+ * Validate a single property value against its JSON Schema definition.
+ * @param {string} name - Property name (for error messages)
+ * @param {*} value - The value to validate
+ * @param {object} prop - JSON Schema property definition
+ * @param {number} errorCode - Error code to throw on failure
+ * @throws {MCPError} on validation failure
+ */
+function validateProperty(name, value, prop, errorCode) {
+  // Type check
+  if (prop.type) {
+    const actual = Array.isArray(value) ? 'array' : typeof value
+    if (prop.type === 'integer') {
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new MCPError(errorCode, `${name}: must be an integer`)
+      }
+    } else if (actual !== prop.type) {
+      throw new MCPError(errorCode, `${name}: must be ${prop.type}`)
+    }
+  }
+
+  // Enum
+  if (prop.enum && !prop.enum.includes(value)) {
+    throw new MCPError(errorCode, `${name}: must be one of ${prop.enum.join(', ')}`)
+  }
+
+  // String constraints
+  if (typeof value === 'string') {
+    if (prop.minLength !== undefined && value.length < prop.minLength) {
+      throw new MCPError(errorCode, `${name}: must be at least ${prop.minLength} characters`)
+    }
+    if (prop.maxLength !== undefined && value.length > prop.maxLength) {
+      throw new MCPError(errorCode, `${name}: must be at most ${prop.maxLength} characters`)
+    }
+    if (prop.pattern !== undefined && !new RegExp(prop.pattern).test(value)) {
+      throw new MCPError(errorCode, `${name}: must match pattern ${prop.pattern}`)
+    }
+  }
+
+  // Numeric constraints
+  if (typeof value === 'number') {
+    if (prop.minimum !== undefined && value < prop.minimum) {
+      throw new MCPError(errorCode, `${name}: must be >= ${prop.minimum}`)
+    }
+    if (prop.maximum !== undefined && value > prop.maximum) {
+      throw new MCPError(errorCode, `${name}: must be <= ${prop.maximum}`)
+    }
+  }
+
+  // Array item type check
+  if (Array.isArray(value) && prop.items && prop.items.type) {
+    for (let i = 0; i < value.length; i++) {
+      const itemActual = typeof value[i]
+      if (itemActual !== prop.items.type) {
+        throw new MCPError(errorCode, `${name}[${i}]: must be ${prop.items.type}`)
+      }
+    }
+  }
+}
 
 /**
  * Validate args against a JSON Schema inputSchema.
@@ -166,61 +226,39 @@ export function validateArgs(schema, args) {
 
   // Validate each provided property
   for (const [name, prop] of Object.entries(properties)) {
-    const value = args[name]
-    if (value === undefined) continue
-
-    // Type check
-    if (prop.type) {
-      const actual = Array.isArray(value) ? 'array' : typeof value
-      if (prop.type === 'integer') {
-        if (typeof value !== 'number' || !Number.isInteger(value)) {
-          throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be an integer`)
-        }
-      } else if (actual !== prop.type) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be ${prop.type}`)
-      }
-    }
-
-    // Enum
-    if (prop.enum && !prop.enum.includes(value)) {
-      throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be one of ${prop.enum.join(', ')}`)
-    }
-
-    // String constraints
-    if (typeof value === 'string') {
-      if (prop.minLength !== undefined && value.length < prop.minLength) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be at least ${prop.minLength} characters`)
-      }
-      if (prop.maxLength !== undefined && value.length > prop.maxLength) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be at most ${prop.maxLength} characters`)
-      }
-      if (prop.pattern !== undefined && !new RegExp(prop.pattern).test(value)) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must match pattern ${prop.pattern}`)
-      }
-    }
-
-    // Numeric constraints
-    if (typeof value === 'number') {
-      if (prop.minimum !== undefined && value < prop.minimum) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be >= ${prop.minimum}`)
-      }
-      if (prop.maximum !== undefined && value > prop.maximum) {
-        throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}: must be <= ${prop.maximum}`)
-      }
-    }
-
-    // Array item type check
-    if (Array.isArray(value) && prop.items && prop.items.type) {
-      for (let i = 0; i < value.length; i++) {
-        const itemActual = typeof value[i]
-        if (itemActual !== prop.items.type) {
-          throw new MCPError(ErrorCode.INVALID_PARAMS, `${name}[${i}]: must be ${prop.items.type}`)
-        }
-      }
-    }
+    if (args[name] === undefined) continue
+    validateProperty(name, args[name], prop, ErrorCode.INVALID_PARAMS)
   }
 
   return args
+}
+
+/**
+ * Validate structuredContent against a tool's outputSchema.
+ * Checks required fields and validates each property.
+ *
+ * @param {object} schema - JSON Schema (type: 'object')
+ * @param {object} output - The structuredContent to validate
+ * @throws {MCPError} on first validation failure (INTERNAL_ERROR)
+ */
+export function validateOutput(schema, output) {
+  if (!schema || !schema.properties) return
+
+  const properties = schema.properties
+  const required = schema.required || []
+
+  // Check required
+  for (const name of required) {
+    if (output[name] === undefined) {
+      throw new MCPError(ErrorCode.INTERNAL_ERROR, `output ${name}: required`)
+    }
+  }
+
+  // Validate each provided property
+  for (const [name, prop] of Object.entries(properties)) {
+    if (output[name] === undefined) continue
+    validateProperty(name, output[name], prop, ErrorCode.INTERNAL_ERROR)
+  }
 }
 
 // ============================================================================
@@ -822,12 +860,15 @@ export function createMCPServer(options = {}) {
 
           // Handle different result formats:
           // 1. Array of content items (with optional annotations)
-          // 2. Object with content array and optional isError
+          // 2. Object with content array and optional isError/structuredContent
           // 3. Plain string or other value (wrap in text content)
           if (Array.isArray(result)) {
             return { content: result }
           } else if (result && typeof result === 'object' && result.content) {
-            // Result object with content array (and possibly isError, structuredContent)
+            // Validate structuredContent against outputSchema if both exist
+            if (tool.outputSchema && result.structuredContent) {
+              validateOutput(tool.outputSchema, result.structuredContent)
+            }
             return result
           } else {
             // Simple result - wrap in text content
